@@ -2,16 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
+import { Button } from "./components/ui/button";
+import { Tab, TabsContainer } from "./components/ui/tab";
+import { Chip } from "./components/ui/chip";
+import { UpdateBanner, type UpdateStatus } from "./components/update-banner";
+import { cn } from "./lib/utils";
 import "./App.css";
-
-type UpdateStatus =
-  | { kind: "idle" }
-  | { kind: "checking" }
-  | { kind: "downloading"; update: Update; received: number; total: number | null }
-  | { kind: "ready"; update: Update }
-  | { kind: "installing" }
-  | { kind: "dismissed" }
-  | { kind: "error"; message: string };
 
 type Mode = "stopwatch" | "pomodoro";
 type Phase = "focus" | "short" | "long";
@@ -108,14 +104,12 @@ export default function App() {
   const [appVersion, setAppVersion] = useState<string>("");
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ kind: "idle" });
 
-  // Tick.
   useEffect(() => {
     if (!running) return;
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
   }, [running]);
 
-  // Persist runtime state so closing the app doesn't lose progress.
   useEffect(() => {
     const s: Persisted = { mode, label, phase, cycle, running, startedAt, accumulatedMs };
     localStorage.setItem(STATE_KEY, JSON.stringify(s));
@@ -138,7 +132,6 @@ export default function App() {
   const remainingMs = targetMs != null ? Math.max(0, targetMs - elapsedMs) : null;
   const display = mode === "pomodoro" ? fmt(remainingMs ?? 0) : fmt(elapsedMs);
 
-  // Auto-advance pomodoro when phase ends.
   useEffect(() => {
     if (mode !== "pomodoro" || !running || remainingMs == null) return;
     if (remainingMs > 0) return;
@@ -146,7 +139,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remainingMs, mode, running]);
 
-  function commitSession(extra?: Partial<Session>) {
+  function commitSession() {
     const dur = elapsedMs;
     if (dur < 1000) return;
     const s: Session = {
@@ -157,7 +150,6 @@ export default function App() {
       startedAt: startedAt ?? Date.now() - dur,
       endedAt: Date.now(),
       durationMs: dur,
-      ...extra,
     };
     const next = [s, ...sessions].slice(0, 200);
     setSessions(next);
@@ -178,7 +170,6 @@ export default function App() {
   }
 
   function stop() {
-    // Snapshot final elapsed before zeroing.
     const finalMs = (running && startedAt ? Date.now() - startedAt : 0) + accumulatedMs;
     if (finalMs >= 1000) {
       const s: Session = {
@@ -215,7 +206,6 @@ export default function App() {
     } else {
       setPhase("focus");
     }
-    // Soft notify; ignore failures (e.g. permission denied).
     try {
       if ("Notification" in window && Notification.permission === "granted") {
         new Notification("thc-timer", {
@@ -246,14 +236,18 @@ export default function App() {
     saveSessions([]);
   }
 
-  // Ask for notification permission once for pomodoro alerts.
+  function deleteSession(id: string) {
+    const next = sessions.filter((s) => s.id !== id);
+    setSessions(next);
+    saveSessions(next);
+  }
+
   useEffect(() => {
     if (mode === "pomodoro" && "Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
   }, [mode]);
 
-  // Read app version for display.
   useEffect(() => {
     getVersion()
       .then(setAppVersion)
@@ -330,27 +324,23 @@ export default function App() {
     return [...map.entries()].sort((a, b) => b[1] - a[1]);
   }, [sessions]);
 
+  const isBreak = mode === "pomodoro" && phase !== "focus";
+
   return (
-    <main className="app">
-      <header className="topbar">
-        <div className="brand">
+    <main className="flex flex-col h-screen px-[22px] pt-[18px] pb-[14px] gap-[14px]">
+      <header className="flex items-center justify-between">
+        <div className="flex items-center gap-2 font-mono text-xs tracking-[0.12em] text-muted lowercase">
           thc·timer
-          {appVersion && <span className="version">v{appVersion}</span>}
+          {appVersion && <span className="text-[10px] opacity-60 normal-case tracking-normal">v{appVersion}</span>}
         </div>
-        <div className="modes">
-          <button
-            className={mode === "stopwatch" ? "tab on" : "tab"}
-            onClick={() => switchMode("stopwatch")}
-          >
+        <TabsContainer>
+          <Tab active={mode === "stopwatch"} onClick={() => switchMode("stopwatch")}>
             stopwatch
-          </button>
-          <button
-            className={mode === "pomodoro" ? "tab on" : "tab"}
-            onClick={() => switchMode("pomodoro")}
-          >
+          </Tab>
+          <Tab active={mode === "pomodoro"} onClick={() => switchMode("pomodoro")}>
             pomodoro
-          </button>
-        </div>
+          </Tab>
+        </TabsContainer>
       </header>
 
       <UpdateBanner
@@ -359,83 +349,88 @@ export default function App() {
         onDismiss={() => setUpdateStatus({ kind: "dismissed" })}
       />
 
-
-      <section className="stage">
+      <section className="flex flex-col items-center gap-[14px] pt-2 pb-[6px]">
         {mode === "pomodoro" && (
-          <div className="phaseRow">
-            <span className={phase === "focus" ? "chip on" : "chip"}>focus</span>
-            <span className={phase === "short" ? "chip on" : "chip"}>short break</span>
-            <span className={phase === "long" ? "chip on" : "chip"}>long break</span>
-            <span className="cycle">cycle {cycle}</span>
+          <div className="flex gap-[6px] items-center">
+            <Chip active={phase === "focus"}>focus</Chip>
+            <Chip active={phase === "short"}>short break</Chip>
+            <Chip active={phase === "long"}>long break</Chip>
+            <span className="ml-[6px] font-mono text-[11px] text-muted">cycle {cycle}</span>
           </div>
         )}
 
-        <div className={`clock ${mode === "pomodoro" && phase !== "focus" ? "break" : ""}`}>
+        <div
+          className={cn(
+            "font-mono tabular-nums font-medium text-[76px] leading-none tracking-[-0.02em] py-1",
+            isBreak ? "text-break" : "text-fg",
+          )}
+        >
           {display}
         </div>
 
         <input
-          className="labelInput"
-          placeholder={mode === "pomodoro" ? "What are you focusing on?" : "What are you working on?"}
+          className="w-full max-w-[420px] bg-panel border border-border rounded-lg px-3 py-[9px] text-[13px] text-center text-fg outline-none placeholder:text-muted focus:border-accent focus:bg-panel-2 transition-colors"
+          placeholder={
+            mode === "pomodoro" ? "What are you focusing on?" : "What are you working on?"
+          }
           value={label}
           onChange={(e) => setLabel(e.target.value)}
         />
 
-        <div className="controls">
+        <div className="flex gap-2">
           {!running ? (
-            <button className="primary" onClick={start}>
+            <Button variant="primary" onClick={start}>
               {accumulatedMs > 0 ? "resume" : "start"}
-            </button>
+            </Button>
           ) : (
-            <button className="primary" onClick={pause}>
+            <Button variant="primary" onClick={pause}>
               pause
-            </button>
+            </Button>
           )}
-          <button className="secondary" onClick={stop} disabled={!running && accumulatedMs === 0}>
+          <Button
+            variant="secondary"
+            onClick={stop}
+            disabled={!running && accumulatedMs === 0}
+          >
             stop
-          </button>
+          </Button>
         </div>
       </section>
 
-      <section className="summary">
-        <div className="todayLine">
-          <span className="muted">today</span>
-          <strong>{fmtShort(todayMs)}</strong>
+      <section className="flex items-baseline justify-between gap-4 px-3 py-2 bg-panel border border-border rounded-[10px]">
+        <div className="flex gap-2 items-baseline">
+          <span className="text-muted text-xs lowercase tracking-wider">today</span>
+          <strong className="font-mono text-base">{fmtShort(todayMs)}</strong>
         </div>
         {totalsByLabel.length > 0 && (
-          <ul className="byLabel">
+          <ul className="flex gap-3 flex-wrap justify-end max-w-[60%] m-0 p-0 list-none">
             {totalsByLabel.slice(0, 4).map(([k, v]) => (
-              <li key={k}>
-                <span className="lbl">{k}</span>
-                <span className="amt">{fmtShort(v)}</span>
+              <li key={k} className="flex gap-[6px] text-xs text-muted">
+                <span className="text-fg max-w-[140px] overflow-hidden text-ellipsis whitespace-nowrap">
+                  {k}
+                </span>
+                <span className="font-mono">{fmtShort(v)}</span>
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      <section className="history">
-        <div className="historyHead">
+      <section className="flex-1 flex flex-col min-h-0">
+        <div className="flex justify-between items-center text-muted text-xs lowercase tracking-wider px-1 pb-[6px]">
           <span>recent</span>
           {sessions.length > 0 && (
-            <button className="link" onClick={clearHistory}>
+            <Button variant="ghost" size="link" onClick={clearHistory}>
               clear
-            </button>
+            </Button>
           )}
         </div>
         {sessions.length === 0 ? (
-          <div className="empty">no sessions yet</div>
+          <div className="text-muted text-xs py-[14px] px-1 text-center">no sessions yet</div>
         ) : (
-          <ul className="sessions">
-            {sessions.slice(0, 8).map((s) => (
-              <li key={s.id}>
-                <span className="when">
-                  {new Date(s.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </span>
-                <span className="lbl">{s.label}</span>
-                <span className={`tag tag-${s.mode}`}>{s.phase ?? s.mode}</span>
-                <span className="amt">{fmtShort(s.durationMs)}</span>
-              </li>
+          <ul className="m-0 p-0 list-none overflow-y-auto flex flex-col gap-[2px]">
+            {sessions.slice(0, 12).map((s) => (
+              <SessionRow key={s.id} s={s} onDelete={() => deleteSession(s.id)} />
             ))}
           </ul>
         )}
@@ -444,77 +439,34 @@ export default function App() {
   );
 }
 
-function UpdateBanner({
-  status,
-  onApply,
-  onDismiss,
-}: {
-  status: UpdateStatus;
-  onApply: (u: Update) => void;
-  onDismiss: () => void;
-}) {
-  if (status.kind === "idle" || status.kind === "checking" || status.kind === "dismissed") {
-    return null;
-  }
-
-  if (status.kind === "downloading") {
-    const pct =
-      status.total != null && status.total > 0
-        ? Math.min(100, Math.round((status.received / status.total) * 100))
-        : null;
-    return (
-      <div className="updateBanner subtle">
-        <div className="updateText">
-          <span className="muted">downloading v{status.update.version}</span>
-          <span className="muted">{pct != null ? `${pct}%` : "…"}</span>
-        </div>
-        <div className="progress">
-          <div className="progressFill" style={{ width: pct != null ? `${pct}%` : "10%" }} />
-        </div>
-      </div>
-    );
-  }
-
-  if (status.kind === "ready") {
-    return (
-      <div className="updateBanner">
-        <div className="updateText">
-          <strong>update ready</strong>
-          <span className="muted">v{status.update.version} — restart to apply</span>
-        </div>
-        <div className="updateActions">
-          <button className="link" onClick={onDismiss}>
-            later
-          </button>
-          <button className="updateBtn" onClick={() => onApply(status.update)}>
-            restart now
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (status.kind === "installing") {
-    return (
-      <div className="updateBanner">
-        <div className="updateText">
-          <strong>installing…</strong>
-          <span className="muted">app will restart in a moment</span>
-        </div>
-      </div>
-    );
-  }
-
+function SessionRow({ s, onDelete }: { s: Session; onDelete: () => void }) {
+  const tagClass =
+    s.mode === "pomodoro"
+      ? "border-[rgba(122,162,247,0.4)] text-accent"
+      : "border-[rgba(158,206,106,0.4)] text-accent-strong";
   return (
-    <div className="updateBanner err">
-      <div className="updateText">
-        <strong>update failed</strong>
-        <span className="muted">{status.message}</span>
-      </div>
-      <button className="link" onClick={onDismiss}>
-        dismiss
+    <li className="group grid grid-cols-[56px_1fr_auto_auto_auto] gap-[10px] items-center px-[10px] py-[7px] rounded-md text-xs hover:bg-panel">
+      <span className="font-mono text-muted text-[11px]">
+        {new Date(s.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+      </span>
+      <span className="text-fg overflow-hidden text-ellipsis whitespace-nowrap">{s.label}</span>
+      <span
+        className={cn(
+          "text-[10px] lowercase px-[6px] py-[2px] rounded-full border tracking-wider",
+          tagClass,
+        )}
+      >
+        {s.phase ?? s.mode}
+      </span>
+      <span className="font-mono text-fg">{fmtShort(s.durationMs)}</span>
+      <button
+        className="opacity-0 group-hover:opacity-100 transition-opacity bg-transparent border-0 text-muted hover:text-danger cursor-pointer text-[14px] leading-none w-5 h-5 flex items-center justify-center"
+        onClick={onDelete}
+        aria-label="Delete session"
+        title="Delete this session"
+      >
+        ×
       </button>
-    </div>
+    </li>
   );
 }
-
