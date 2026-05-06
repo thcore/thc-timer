@@ -7,7 +7,6 @@ import { Tab, TabsContainer } from "./components/ui/tab";
 import { Chip } from "./components/ui/chip";
 import { UpdateBanner, type UpdateStatus } from "./components/update-banner";
 import { cn } from "./lib/utils";
-import "./App.css";
 
 type Mode = "stopwatch" | "pomodoro";
 type Phase = "focus" | "short" | "long";
@@ -85,6 +84,16 @@ function loadState(): Persisted | null {
 function startOfDay(ts: number) {
   const d = new Date(ts);
   d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function startOfWeek(ts: number) {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  // Treat Monday as the first day of the week.
+  const day = d.getDay();
+  const diff = (day + 6) % 7;
+  d.setDate(d.getDate() - diff);
   return d.getTime();
 }
 
@@ -314,6 +323,13 @@ export default function App() {
       .reduce((sum, s) => sum + s.durationMs, 0);
   }, [sessions]);
 
+  const weekMs = useMemo(() => {
+    const weekStart = startOfWeek(Date.now());
+    return sessions
+      .filter((s) => s.endedAt >= weekStart)
+      .reduce((sum, s) => sum + s.durationMs, 0);
+  }, [sessions]);
+
   const totalsByLabel = useMemo(() => {
     const todayStart = startOfDay(Date.now());
     const map = new Map<string, number>();
@@ -398,9 +414,15 @@ export default function App() {
       </section>
 
       <section className="flex items-baseline justify-between gap-4 px-3 py-2 bg-panel border border-border rounded-[10px]">
-        <div className="flex gap-2 items-baseline">
-          <span className="text-muted text-xs lowercase tracking-wider">today</span>
-          <strong className="font-mono text-base">{fmtShort(todayMs)}</strong>
+        <div className="flex gap-4 items-baseline">
+          <div className="flex gap-2 items-baseline">
+            <span className="text-muted text-xs lowercase tracking-wider">today</span>
+            <strong className="font-mono text-base">{fmtShort(todayMs)}</strong>
+          </div>
+          <div className="flex gap-2 items-baseline">
+            <span className="text-muted text-xs lowercase tracking-wider">week</span>
+            <strong className="font-mono text-sm text-muted">{fmtShort(weekMs)}</strong>
+          </div>
         </div>
         {totalsByLabel.length > 0 && (
           <ul className="flex gap-3 flex-wrap justify-end max-w-[60%] m-0 p-0 list-none">
