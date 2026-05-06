@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import "./App.css";
 
 type Mode = "stopwatch" | "pomodoro";
@@ -238,6 +240,28 @@ export default function App() {
       Notification.requestPermission().catch(() => {});
     }
   }, [mode]);
+
+  // Check for updates once on startup.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const update = await check();
+        if (cancelled || !update) return;
+        const ok = confirm(
+          `New version available: ${update.version}\n\n${update.body ?? ""}\n\nDownload and install now?`,
+        );
+        if (!ok) return;
+        await update.downloadAndInstall();
+        await relaunch();
+      } catch {
+        /* updater unavailable in dev or no release yet — ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const todayMs = useMemo(() => {
     const todayStart = startOfDay(Date.now());
