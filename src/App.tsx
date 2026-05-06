@@ -7,9 +7,10 @@ import "./App.css";
 type UpdateStatus =
   | { kind: "idle" }
   | { kind: "checking" }
-  | { kind: "available"; update: Update }
   | { kind: "downloading"; update: Update; received: number; total: number | null }
-  | { kind: "installing"; update: Update }
+  | { kind: "ready"; update: Update }
+  | { kind: "installing" }
+  | { kind: "dismissed" }
   | { kind: "error"; message: string };
 
 type Mode = "stopwatch" | "pomodoro";
@@ -259,7 +260,7 @@ export default function App() {
       .catch(() => setAppVersion(""));
   }, []);
 
-  // Check for updates once on startup.
+  // Check for updates and pre-download in the background on startup.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -271,9 +272,27 @@ export default function App() {
           setUpdateStatus({ kind: "idle" });
           return;
         }
-        setUpdateStatus({ kind: "available", update });
-      } catch {
-        if (!cancelled) setUpdateStatus({ kind: "idle" });
+        let received = 0;
+        let total: number | null = null;
+        setUpdateStatus({ kind: "downloading", update, received, total });
+        await update.download((event) => {
+          if (cancelled) return;
+          if (event.event === "Started") {
+            total = event.data.contentLength ?? null;
+            setUpdateStatus({ kind: "downloading", update, received: 0, total });
+          } else if (event.event === "Progress") {
+            received += event.data.chunkLength;
+            setUpdateStatus({ kind: "downloading", update, received, total });
+          }
+        });
+        if (cancelled) return;
+        setUpdateStatus({ kind: "ready", update });
+      } catch (err) {
+        if (cancelled) return;
+        setUpdateStatus({
+          kind: "error",
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     })();
     return () => {
@@ -281,22 +300,10 @@ export default function App() {
     };
   }, []);
 
-  async function installUpdate(update: Update) {
-    let received = 0;
-    let total: number | null = null;
-    setUpdateStatus({ kind: "downloading", update, received, total });
+  async function applyUpdate(update: Update) {
+    setUpdateStatus({ kind: "installing" });
     try {
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started") {
-          total = event.data.contentLength ?? null;
-          setUpdateStatus({ kind: "downloading", update, received: 0, total });
-        } else if (event.event === "Progress") {
-          received += event.data.chunkLength;
-          setUpdateStatus({ kind: "downloading", update, received, total });
-        } else if (event.event === "Finished") {
-          setUpdateStatus({ kind: "installing", update });
-        }
-      });
+      await update.install();
       await relaunch();
     } catch (err) {
       setUpdateStatus({
@@ -348,8 +355,8 @@ export default function App() {
 
       <UpdateBanner
         status={updateStatus}
-        onInstall={installUpdate}
-        onDismiss={() => setUpdateStatus({ kind: "idle" })}
+        onApply={applyUpdate}
+        onDismiss={() => setUpdateStatus({ kind: "dismissed" })}
       />
 
 
@@ -439,32 +446,15 @@ export default function App() {
 
 function UpdateBanner({
   status,
-  onInstall,
+  onApply,
   onDismiss,
 }: {
   status: UpdateStatus;
-  onInstall: (u: Update) => void;
+  onApply: (u: Update) => void;
   onDismiss: () => void;
 }) {
-  if (status.kind === "idle" || status.kind === "checking") return null;
-
-  if (status.kind === "available") {
-    return (
-      <div className="updateBanner">
-        <div className="updateText">
-          <strong>update available</strong>
-          <span className="muted">v{status.update.version}</span>
-        </div>
-        <div className="updateActions">
-          <button className="link" onClick={onDismiss}>
-            later
-          </button>
-          <button className="updateBtn" onClick={() => onInstall(status.update)}>
-            install
-          </button>
-        </div>
-      </div>
-    );
+  if (status.kind === "idle" || status.kind === "checking" || status.kind === "dismissed") {
+    return null;
   }
 
   if (status.kind === "downloading") {
@@ -473,16 +463,32 @@ function UpdateBanner({
         ? Math.min(100, Math.round((status.received / status.total) * 100))
         : null;
     return (
-      <div className="updateBanner">
+      <div className="updateBanner subtle">
         <div className="updateText">
-          <strong>downloading v{status.update.version}…</strong>
-          <span className="muted">{pct != null ? `${pct}%` : "starting"}</span>
+          <span className="muted">downloading v{status.update.version}</span>
+          <span className="muted">{pct != null ? `${pct}%` : "…"}</span>
         </div>
         <div className="progress">
-          <div
-            className="progressFill"
-            style={{ width: pct != null ? `${pct}%` : "20%" }}
-          />
+          <div className="progressFill" style={{ width: pct != null ? `${pct}%` : "10%" }} />
+        </div>
+      </div>
+    );
+  }
+
+  if (status.kind === "ready") {
+    return (
+      <div className="updateBanner">
+        <div className="updateText">
+          <strong>update ready</strong>
+          <span className="muted">v{status.update.version} — restart to apply</span>
+        </div>
+        <div className="updateActions">
+          <button className="link" onClick={onDismiss}>
+            later
+          </button>
+          <button className="updateBtn" onClick={() => onApply(status.update)}>
+            restart now
+          </button>
         </div>
       </div>
     );
@@ -492,7 +498,8 @@ function UpdateBanner({
     return (
       <div className="updateBanner">
         <div className="updateText">
-          <strong>installing… app will restart</strong>
+          <strong>installing…</strong>
+          <span className="muted">app will restart in a moment</span>
         </div>
       </div>
     );

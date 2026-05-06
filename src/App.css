@@ -395,6 +395,17 @@ button.secondary:disabled {
   border-radius: 10px;
 }
 
+.updateBanner.subtle {
+  background: var(--panel);
+  border-color: var(--border);
+  padding: 6px 10px;
+  gap: 4px;
+}
+
+.updateBanner.subtle .updateText {
+  font-size: 11px;
+}
+
 .updateBanner.err {
   background: rgba(247, 118, 142, 0.08);
   border-color: rgba(247, 118, 142, 0.4);
