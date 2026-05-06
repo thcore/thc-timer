@@ -55,6 +55,17 @@ body {
   letter-spacing: 0.12em;
   color: var(--muted);
   text-transform: lowercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.version {
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.6;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .modes {
@@ -371,6 +382,69 @@ button.secondary:disabled {
 .sessions .amt {
   font-family: var(--mono);
   color: var(--fg);
+}
+
+/* Update banner */
+.updateBanner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(122, 162, 247, 0.12), rgba(122, 162, 247, 0.05));
+  border: 1px solid rgba(122, 162, 247, 0.4);
+  border-radius: 10px;
+}
+
+.updateBanner.err {
+  background: rgba(247, 118, 142, 0.08);
+  border-color: rgba(247, 118, 142, 0.4);
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.updateText {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.updateActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.updateBtn {
+  font-family: inherit;
+  font-size: 12px;
+  background: var(--accent);
+  color: #0e0f12;
+  border: 0;
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.updateBtn:hover {
+  background: #9bb8f9;
+}
+
+.progress {
+  height: 4px;
+  background: rgba(122, 162, 247, 0.15);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 200ms ease;
 }
 
 /* Scrollbars */

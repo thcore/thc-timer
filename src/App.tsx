@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { check } from "@tauri-apps/plugin-updater";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
 import "./App.css";
+
+type UpdateStatus =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "available"; update: Update }
+  | { kind: "downloading"; update: Update; received: number; total: number | null }
+  | { kind: "installing"; update: Update }
+  | { kind: "error"; message: string };
 
 type Mode = "stopwatch" | "pomodoro";
 type Phase = "focus" | "short" | "long";
@@ -95,6 +104,8 @@ export default function App() {
   const [accumulatedMs, setAccumulatedMs] = useState<number>(r?.accumulatedMs ?? 0);
   const [now, setNow] = useState<number>(Date.now());
   const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
+  const [appVersion, setAppVersion] = useState<string>("");
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ kind: "idle" });
 
   // Tick.
   useEffect(() => {
@@ -241,27 +252,59 @@ export default function App() {
     }
   }, [mode]);
 
+  // Read app version for display.
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(""));
+  }, []);
+
   // Check for updates once on startup.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setUpdateStatus({ kind: "checking" });
       try {
         const update = await check();
-        if (cancelled || !update) return;
-        const ok = confirm(
-          `New version available: ${update.version}\n\n${update.body ?? ""}\n\nDownload and install now?`,
-        );
-        if (!ok) return;
-        await update.downloadAndInstall();
-        await relaunch();
+        if (cancelled) return;
+        if (!update) {
+          setUpdateStatus({ kind: "idle" });
+          return;
+        }
+        setUpdateStatus({ kind: "available", update });
       } catch {
-        /* updater unavailable in dev or no release yet — ignore */
+        if (!cancelled) setUpdateStatus({ kind: "idle" });
       }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  async function installUpdate(update: Update) {
+    let received = 0;
+    let total: number | null = null;
+    setUpdateStatus({ kind: "downloading", update, received, total });
+    try {
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength ?? null;
+          setUpdateStatus({ kind: "downloading", update, received: 0, total });
+        } else if (event.event === "Progress") {
+          received += event.data.chunkLength;
+          setUpdateStatus({ kind: "downloading", update, received, total });
+        } else if (event.event === "Finished") {
+          setUpdateStatus({ kind: "installing", update });
+        }
+      });
+      await relaunch();
+    } catch (err) {
+      setUpdateStatus({
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   const todayMs = useMemo(() => {
     const todayStart = startOfDay(Date.now());
@@ -283,7 +326,10 @@ export default function App() {
   return (
     <main className="app">
       <header className="topbar">
-        <div className="brand">thc·timer</div>
+        <div className="brand">
+          thc·timer
+          {appVersion && <span className="version">v{appVersion}</span>}
+        </div>
         <div className="modes">
           <button
             className={mode === "stopwatch" ? "tab on" : "tab"}
@@ -299,6 +345,13 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      <UpdateBanner
+        status={updateStatus}
+        onInstall={installUpdate}
+        onDismiss={() => setUpdateStatus({ kind: "idle" })}
+      />
+
 
       <section className="stage">
         {mode === "pomodoro" && (
@@ -383,3 +436,78 @@ export default function App() {
     </main>
   );
 }
+
+function UpdateBanner({
+  status,
+  onInstall,
+  onDismiss,
+}: {
+  status: UpdateStatus;
+  onInstall: (u: Update) => void;
+  onDismiss: () => void;
+}) {
+  if (status.kind === "idle" || status.kind === "checking") return null;
+
+  if (status.kind === "available") {
+    return (
+      <div className="updateBanner">
+        <div className="updateText">
+          <strong>update available</strong>
+          <span className="muted">v{status.update.version}</span>
+        </div>
+        <div className="updateActions">
+          <button className="link" onClick={onDismiss}>
+            later
+          </button>
+          <button className="updateBtn" onClick={() => onInstall(status.update)}>
+            install
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (status.kind === "downloading") {
+    const pct =
+      status.total != null && status.total > 0
+        ? Math.min(100, Math.round((status.received / status.total) * 100))
+        : null;
+    return (
+      <div className="updateBanner">
+        <div className="updateText">
+          <strong>downloading v{status.update.version}…</strong>
+          <span className="muted">{pct != null ? `${pct}%` : "starting"}</span>
+        </div>
+        <div className="progress">
+          <div
+            className="progressFill"
+            style={{ width: pct != null ? `${pct}%` : "20%" }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (status.kind === "installing") {
+    return (
+      <div className="updateBanner">
+        <div className="updateText">
+          <strong>installing… app will restart</strong>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="updateBanner err">
+      <div className="updateText">
+        <strong>update failed</strong>
+        <span className="muted">{status.message}</span>
+      </div>
+      <button className="link" onClick={onDismiss}>
+        dismiss
+      </button>
+    </div>
+  );
+}
+
