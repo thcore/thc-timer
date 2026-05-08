@@ -6,6 +6,8 @@ import { Button } from "./components/ui/button";
 import { Tab, TabsContainer } from "./components/ui/tab";
 import { Chip } from "./components/ui/chip";
 import { UpdateBanner, type UpdateStatus } from "./components/update-banner";
+import { Timeline, type TimelinePlan, type PlanNote } from "./components/timeline";
+import { PlanNotes } from "./components/plan-notes";
 import { cn } from "./lib/utils";
 
 type Mode = "stopwatch" | "pomodoro";
@@ -30,6 +32,7 @@ const POMO = {
 
 const SESSIONS_KEY = "thc-timer.sessions.v1";
 const STATE_KEY = "thc-timer.state.v1";
+const PLANS_KEY = "thc-timer.plans.v1";
 
 function fmt(ms: number) {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -60,6 +63,28 @@ function loadSessions(): Session[] {
 
 function saveSessions(s: Session[]) {
   localStorage.setItem(SESSIONS_KEY, JSON.stringify(s));
+}
+
+function loadPlans(): TimelinePlan[] {
+  try {
+    const raw = localStorage.getItem(PLANS_KEY);
+    return raw ? (JSON.parse(raw) as TimelinePlan[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePlans(p: TimelinePlan[]) {
+  localStorage.setItem(PLANS_KEY, JSON.stringify(p));
+}
+
+function timeStrToMs(today: number, hhmm: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const mm = Number(m[2]);
+  if (h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+  return today + h * 3_600_000 + mm * 60_000;
 }
 
 type Persisted = {
@@ -110,6 +135,12 @@ export default function App() {
   const [accumulatedMs, setAccumulatedMs] = useState<number>(r?.accumulatedMs ?? 0);
   const [now, setNow] = useState<number>(Date.now());
   const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
+  const [plans, setPlans] = useState<TimelinePlan[]>(() => loadPlans());
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [planFormOpen, setPlanFormOpen] = useState(false);
+  const [planStart, setPlanStart] = useState("09:00");
+  const [planEnd, setPlanEnd] = useState("10:00");
+  const [planLabel, setPlanLabel] = useState("");
   const [appVersion, setAppVersion] = useState<string>("");
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ kind: "idle" });
 
@@ -249,6 +280,52 @@ export default function App() {
     const next = sessions.filter((s) => s.id !== id);
     setSessions(next);
     saveSessions(next);
+  }
+
+  function addPlan() {
+    const text = planLabel.trim();
+    if (!text) return;
+    const today = startOfDay(Date.now());
+    const s = timeStrToMs(today, planStart);
+    const e = timeStrToMs(today, planEnd);
+    if (s == null || e == null || e <= s) return;
+    const p: TimelinePlan = {
+      id: crypto.randomUUID(),
+      label: text,
+      startedAt: s,
+      endedAt: e,
+    };
+    const next = [...plans, p];
+    setPlans(next);
+    savePlans(next);
+    setPlanLabel("");
+    setPlanFormOpen(false);
+  }
+
+  function deletePlan(id: string) {
+    const next = plans.filter((p) => p.id !== id);
+    setPlans(next);
+    savePlans(next);
+    if (selectedPlanId === id) setSelectedPlanId(null);
+  }
+
+  function addNote(planId: string, text: string) {
+    const note: PlanNote = { id: crypto.randomUUID(), ts: Date.now(), text };
+    const next = plans.map((p) =>
+      p.id === planId ? { ...p, notes: [...(p.notes ?? []), note] } : p,
+    );
+    setPlans(next);
+    savePlans(next);
+  }
+
+  function deleteNote(planId: string, noteId: string) {
+    const next = plans.map((p) =>
+      p.id === planId
+        ? { ...p, notes: (p.notes ?? []).filter((n) => n.id !== noteId) }
+        : p,
+    );
+    setPlans(next);
+    savePlans(next);
   }
 
   useEffect(() => {
@@ -437,6 +514,80 @@ export default function App() {
           </ul>
         )}
       </section>
+
+      <div className="flex flex-col gap-[6px]">
+        <Timeline
+          plans={plans}
+          onDeletePlan={deletePlan}
+          onSelectPlan={(id) => setSelectedPlanId((cur) => (cur === id ? null : id))}
+          selectedPlanId={selectedPlanId}
+        />
+
+        {planFormOpen ? (
+          <div className="flex gap-[6px] items-center px-1">
+            <input
+              type="time"
+              value={planStart}
+              onChange={(e) => setPlanStart(e.target.value)}
+              className="bg-panel border border-border rounded-md px-2 py-1 text-[11px] font-mono text-fg outline-none focus:border-accent"
+            />
+            <span className="text-muted text-[11px]">–</span>
+            <input
+              type="time"
+              value={planEnd}
+              onChange={(e) => setPlanEnd(e.target.value)}
+              className="bg-panel border border-border rounded-md px-2 py-1 text-[11px] font-mono text-fg outline-none focus:border-accent"
+            />
+            <input
+              autoFocus
+              value={planLabel}
+              onChange={(e) => setPlanLabel(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addPlan();
+                if (e.key === "Escape") {
+                  setPlanLabel("");
+                  setPlanFormOpen(false);
+                }
+              }}
+              placeholder="what's the plan?"
+              className="flex-1 bg-panel border border-border rounded-md px-2 py-1 text-[11px] text-fg outline-none placeholder:text-muted focus:border-accent"
+            />
+            <Button variant="primary" size="sm" onClick={addPlan} disabled={!planLabel.trim()}>
+              add
+            </Button>
+            <Button
+              variant="ghost"
+              size="link"
+              onClick={() => {
+                setPlanLabel("");
+                setPlanFormOpen(false);
+              }}
+            >
+              cancel
+            </Button>
+          </div>
+        ) : (
+          <div className="flex justify-end px-1">
+            <Button variant="ghost" size="link" onClick={() => setPlanFormOpen(true)}>
+              + plan
+            </Button>
+          </div>
+        )}
+
+        {selectedPlanId &&
+          (() => {
+            const sel = plans.find((p) => p.id === selectedPlanId);
+            if (!sel) return null;
+            return (
+              <PlanNotes
+                plan={sel}
+                onAddNote={addNote}
+                onDeleteNote={deleteNote}
+                onClose={() => setSelectedPlanId(null)}
+              />
+            );
+          })()}
+      </div>
 
       <section className="flex-1 flex flex-col min-h-0">
         <div className="flex justify-between items-center text-muted text-xs lowercase tracking-wider px-1 pb-[6px]">
